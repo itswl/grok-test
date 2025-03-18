@@ -1,0 +1,31 @@
+
+# 服务器巡检配置文件
+
+# 输出目录配置
+output:
+  dir: "./server_inspection"
+
+# SSH连接配置
+ssh:
+  port: 22
+  user: "user"
+  password: "password"
+
+# AI分析配置
+ai:
+  # Deepseek API密钥，如果为空则使用本地模型
+  volc_key: "xai-xxx"
+  # AI API基础URL
+  base_url: "https://api.x.ai/v1"
+  # 使用的AI模型
+  model: "grok-2-latest"
+
+# 服务器列表
+servers:
+  - ip: "127.0.0.1"
+  - ip: "192.168.0.1"
+    # 如果不指定，则使用全局SSH配置
+    # ssh:
+    #   port: 22
+    #   user: "custom_user"
+    #   password: "custom_password"
