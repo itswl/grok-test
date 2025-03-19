@@ -1,0 +1,27 @@
+version: '3'
+
+services:
+  alerts:
+    build: .
+    ports:
+      - "6000:6000"
+    volumes:
+      - ./data:/app/data
+    command: python alerts.py
+    environment:
+      - DB_PATH=/app/data/chat.db
+      - ALERTS_DB_PATH=/app/data/alerts.db
+
+  chat:
+    build: .
+    ports:
+      - "6001:6001"
+    volumes:
+      - ./data:/app/data
+    command: python chat.py
+    environment:
+      - DB_PATH=/app/data/chat.db
+      - ALERTS_DB_PATH=/app/data/alerts.db
+
+volumes:
+  data: 
