@@ -1,0 +1,43 @@
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+nbproject/private/
+build/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+### VSCODE ###
+.vscode/
+
+.deploy_git/
+
+nohup.out
+jupyter.log
+upload.log
+.ipynb_checkpoints
+.Trash-0/
+
+.DS_Store
+Thumbs.db
+__pycache__/
+
+api_config.py
+logs/
+volcengine-python-sdk-*/
+examples/
+markdown/
+*.db
