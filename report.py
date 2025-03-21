@@ -1,4 +1,5 @@
 from openai import OpenAI
+# 修复了字符串格式化问题：将AI_PROMPT中的{ip}改为{{ip}}并使用replace替代format
 import time
 import os
 import socket
@@ -10,25 +11,89 @@ import subprocess
 
 # 系统巡检命令列表，新增了硬件监控、日志审计等检查项
 commands = [
-    "uname -a", "hostname", "cat /etc/os-release", "lsb_release -a", "uptime",
-    "lspci", "lsusb", "lsblk",
-    "ss -tunlp", "ip addr",
-    "df -Th", "lsblk", "mount",
-    "last", "who", "cat /etc/passwd", "cat /etc/sudoers", "sudo iptables -nvL", "sudo firewall-cmd --list-all",
-    "systemctl list-units --type=service --no-pager",
-    "crontab -l", "date", "timedatectl",
-    "top -bc -o %MEM | head -n 17|sed -n '7,17p'", 
-    "top -bc -o %CPU | head -n 17|sed -n '7,17p'",
-    # 新增的检查项
-    "free -m",  # 内存使用情况
-    "vmstat 1 5",  # 内存与交换区使用情况
-   "sudo journalctl -p 3 -n 50",   # 查看最近 50 条错误级别日志
-   "sudo dmesg | tail -n 20",       # 查看最近 20 条内核日志
-   "sudo grep -i 'error|fail' /var/log/syslog",  # 查找系统日志中的错误
-   "sudo find /var/log -type f -size +50M -exec du -h {} + | sort -rh",  # 查找大于50M的日志文件
-   "sudo systemctl list-units --failed",  # 列出失败的服务
-   "sudo journalctl -u sshd --no-pager | tail -n 20",   # 检查 SSHD 日志
-   "nvidia-smi",
+    # 系统基本信息
+    "uname -a",                                     # 显示完整的系统信息（内核版本、主机名、架构等）
+    "hostname",                                     # 显示当前主机名
+    "cat /etc/os-release",                          # 显示Linux发行版信息
+    "uptime",                                       # 显示系统运行时间、用户数和平均负载
+    
+    # 硬件信息
+    "lspci",                                        # 列出所有PCI总线设备
+    "lsusb",                                        # 列出所有USB设备
+    "lsblk",                                        # 以树状结构显示块设备信息
+    "df -Th",                                       # 显示文件系统使用情况，包括文件系统类型(-T)和可读格式(-h)
+    "df -i",                                        # 检查inode使用情况
+    "mount",                                        # 显示当前挂载的文件系统
+    "sudo lshw -short",                             # 显示系统硬件概要信息
+    "cat /proc/cpuinfo | grep 'model name' | uniq", # 显示CPU型号信息（去除重复）
+    "cat /proc/meminfo | grep -E 'MemTotal|MemFree|MemAvailable'", # 显示内存总量和可用量
+    "free -m",                                      # 显示系统内存使用情况（MB为单位）
+    
+    # 网络信息
+    "ip addr",                                      # 显示所有网络接口信息
+    "ss -tunlp",                                    # 显示所有TCP(-t)和UDP(-u)监听(-l)端口，显示进程(-p)和数字端口(-n)
+    "route -n",                                     # 显示内核路由表（以数字形式）
+    "netstat -s | head -40",                        # 显示网络统计信息（仅显示前40行重要信息）
+    "cat /etc/resolv.conf",                         # 显示系统DNS解析配置
+    "sudo cat /etc/hosts.allow /etc/hosts.deny 2>/dev/null",    # 检查TCP Wrapper配置
+    "ping -c 3 8.8.8.8",                            # 测试网络连通性（ping谷歌DNS服务器3次）
+    
+    # 进程与性能
+    "ps aux --sort=-%cpu | head -10",               # 显示CPU占用率最高的10个进程
+    "ps aux --sort=-%mem | head -10",               # 显示内存占用率最高的10个进程
+    "top -bc -n 1 -o %CPU | head -20",              # 显示CPU使用率最高的进程（批处理模式，只运行一次）
+    "vmstat 1 3",                                   # 每隔1秒报告系统内存、进程、CPU等统计信息，共3次
+    "mpstat -P ALL 1 2",                            # 显示所有CPU核心的详细统计信息，每秒一次，共2次
+    "iostat -x 2 2",                                # 显示详细的IO统计信息，每2秒一次，共2次
+    "cat /proc/loadavg",                            # 显示系统平均负载
+    "nvidia-smi",                                   # 显示NVIDIA GPU状态信息
+    
+    # 用户与安全信息
+    "who",                                          # 显示当前登录的用户
+    "last | head -20",                              # 显示最近20条登录记录
+    "sudo lastb | head -10",                        # 查看最近10条失败的登录尝试
+    "cat /etc/passwd",                              # 显示系统用户账户信息
+    "ls -la --time-style=full-iso /etc/passwd /etc/shadow /etc/group",  # 显示用户和组文件的详细时间信息
+    "awk -F: '{print $1, $3, $4, $6}' /etc/passwd | sort -n -k2",  # 按照UID排序显示用户列表
+    "cat /etc/sudoers 2>/dev/null && ls -l /etc/sudoers.d/ 2>/dev/null",  # 显示sudo权限配置
+    "sudo ausearch -m USER_AUTH -m USER_ACCT -m ADD_USER -ts today 2>/dev/null || sudo journalctl _COMM=useradd _COMM=adduser -n 10 2>/dev/null",  # 检查用户添加和认证
+    
+    # 系统安全性检查
+    "sudo find / -perm -4000 -ls 2>/dev/null | head -20",      # 查找具有SUID权限的文件（仅显示前20个）
+    "sudo grep -v '^#' /etc/ssh/sshd_config | grep -v '^$'",  # 只显示SSH有效配置行
+    "ls -la /root/.ssh/ 2>/dev/null",                           # 检查root的SSH密钥文件
+    "sudo find /home -name 'authorized_keys' -o -name 'id_rsa*' 2>/dev/null | head -10",  # 查找所有用户SSH密钥
+    "sudo iptables -nvL || sudo firewall-cmd --list-all",     # 检查防火墙规则（二选一）
+    
+    # 服务与计划任务
+    "systemctl list-units --state=running --type=service --no-pager", # 显示正在运行的系统服务单元
+    "systemctl list-units --failed --no-pager",            # 列出所有启动失败的服务单元
+    "crontab -l 2>/dev/null && ls -l /etc/cron.*",         # 显示计划任务和系统cron目录
+    "sudo ls -la /etc/cron.d/ /etc/crontab /var/spool/cron/ 2>/dev/null", # 查看所有crontab文件
+    
+    # 系统日志分析
+    "sudo journalctl -p 3 -n 30 --no-pager 2>/dev/null",   # 查看最近30条错误级别的系统日志
+    "sudo dmesg | tail -n 20",                      # 显示最近20条内核缓冲区信息
+    "sudo grep -Ei 'error|fail|critical' /var/log/syslog 2>/dev/null || sudo grep -Ei 'error|fail|critical' /var/log/messages 2>/dev/null | tail -20",  # 查找系统日志中的错误
+    "sudo find /var/log -type f -size +100M -exec du -h {} \\; 2>/dev/null | sort -rh",  # 查找大于100MB的日志文件
+    
+    # 存储与文件系统
+    "sudo fdisk -l 2>/dev/null || lsblk -f",        # 磁盘分区信息
+    "cat /etc/fstab",                               # 显示系统启动时自动挂载的文件系统配置
+    # "sudo du -sh /* 2>/dev/null | sort -rh | head -10", # 显示根目录下占用空间最大的10个目录
+    
+    # 系统限制与配置
+    "ulimit -a",                                    # 显示当前用户的资源限制
+    "cat /etc/security/limits.conf | grep -v '^#' | grep -v '^$'", # 显示系统资源限制配置（非注释行）
+    "sudo sysctl -a 2>/dev/null | grep -E 'vm.swappiness|fs.file-max|net.ipv4.tcp_fin_timeout|net.core.somaxconn'", # 显示关键内核参数
+    
+    # 容器与云原生
+    "sudo docker ps -a 2>/dev/null",                # 显示所有Docker容器
+    "kubectl get pods --all-namespaces 2>/dev/null",# 显示所有命名空间中的Kubernetes Pod
+    "kubectl get nodes 2>/dev/null",                # 显示Kubernetes集群中的所有节点
+    
+    # 时间同步
+    "date && timedatectl"                           # 显示系统日期、时间和NTP同步状态
 ]
 
 # AI分析系统提示模板
@@ -44,10 +109,11 @@ AI_PROMPT = """你是一名拥有 RHCE/CCIE/HCIE/H3CSE 认证的高级工程师�
    - 系统日志的错误分析
    
 3. 检测潜在问题：
-   - 安全漏洞（弱密码、权限问题）
-   - 性能瓶颈（CPU/内存使用率）
-   - 配置错误（服务冲突、失效策略）
-   - 日志审计（错误日志、内核日志）
+   - 安全漏洞（弱密码、权限问题、SSH配置、异常用户账户）
+   - 性能瓶颈（CPU/内存使用率、IO等待、网络拥塞）
+   - 配置错误（服务冲突、失效策略、资源限制）
+   - 日志审计（错误日志、内核日志、安全事件）
+   - 可疑进程（异常CPU/内存占用、可疑网络连接）
 
 4. 生成HTML格式报告：
    - 包含完整的HTML文档结构
@@ -60,27 +126,43 @@ AI_PROMPT = """你是一名拥有 RHCE/CCIE/HCIE/H3CSE 认证的高级工程师�
 <!DOCTYPE html>
 <html>
 <head>
-  <title>服务器健康检查报告（{ip}）</title>
+  <title>服务器健康检查报告（{{ip}}）</title>
   <style>
     body {{ font-family: Arial, sans-serif; margin: 20px; }}
     h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; }}
+    h2 {{ color: #2c3e50; border-bottom: 1px solid #bdc3c7; padding-bottom: 5px; }}
+    h3 {{ color: #34495e; }}
     table {{ border-collapse: collapse; width: 80%; margin: 20px 0; }}
     th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
     th {{ background-color: #f8f9fa; }}
     .critical {{ color: red; font-weight: bold; }}
+    .warning {{ color: orange; font-weight: bold; }}
+    .success {{ color: green; }}
     .section {{ margin-bottom: 30px; }}
+    .code {{ background-color: #f5f5f5; padding: 10px; border-radius: 5px; font-family: monospace; overflow-x: auto; }}
+    .summary {{ background-color: #eaf2f8; padding: 15px; border-left: 5px solid #3498db; margin: 20px 0; }}
   </style>
 </head>
 <body>
   <div class="section">
-    <h1>服务器健康检查报告（{ip}）</h1>
+    <h1>服务器健康检查报告（{{ip}}）</h1>
+    <div class="summary">
+      <p><strong>检查时间：</strong> YYYY-MM-DD HH:MM:SS</p>
+      <p><strong>健康状态：</strong> <span class="critical">需要关注</span> / <span class="warning">一般</span> / <span class="success">良好</span></p>
+      <p><strong>紧急问题：</strong> X个高危问题，Y个中危问题，Z个低危问题</p>
+    </div>
 
     <div class="section">
       <h2>系统概览</h2>
       <ul>
         <li>操作系统：</li>
+        <li>内核版本：</li>
         <li>运行时间：</li>
         <li>最后登录用户：</li>
+        <li>系统负载：</li>
+        <li>CPU核心数：</li>
+        <li>内存总量：</li>
+        <li>已使用磁盘空间：</li>
       </ul>
     </div>
 
@@ -100,9 +182,117 @@ AI_PROMPT = """你是一名拥有 RHCE/CCIE/HCIE/H3CSE 认证的高级工程师�
 
     <div class="section">
       <h2>优化建议</h2>
+      <h3>安全加固</h3>
       <ul>
-        <li>分点列出可执行方案</li>
+        <li>SSH安全：
+          <ul>
+            <li>禁用root远程登录：编辑<code>/etc/ssh/sshd_config</code>，设置<code>PermitRootLogin no</code></li>
+            <li>使用密钥认证：设置<code>PasswordAuthentication no</code>，只允许密钥登录</li>
+            <li>限制登录IP：使用<code>AllowUsers user@192.168.1.*</code>限制特定用户和IP</li>
+            <li>修改默认端口：将默认22端口修改为非标准端口</li>
+            <li>启用登录失败限制：使用fail2ban防止暴力破解</li>
+          </ul>
+        </li>
+        <li>账户安全：
+          <ul>
+            <li>删除不必要账户：<code>userdel -r username</code></li>
+            <li>设置密码复杂度：配置PAM模块强制密码策略</li>
+            <li>定期轮换密码：配置密码过期策略<code>chage -M 90 username</code></li>
+            <li>锁定系统账户：<code>passwd -l username</code>锁定不需要登录的系统账户</li>
+          </ul>
+        </li>
+        <li>网络安全：
+          <ul>
+            <li>关闭不必要端口：使用防火墙只开放必要服务端口</li>
+            <li>配置防火墙规则：设置iptables或firewalld的详细规则</li>
+            <li>限制访问来源：设置源IP限制，只允许特定网段访问关键服务</li>
+          </ul>
+        </li>
+        <li>权限控制：
+          <ul>
+            <li>最小权限原则：清理sudo权限，仅授予所需最小权限</li>
+            <li>定期审计sudo权限：检查/etc/sudoers和/etc/sudoers.d/目录</li>
+            <li>修复SUID/SGID问题：降低不必要的特权位<code>chmod -s filename</code></li>
+          </ul>
+        </li>
+        <li>安全更新：
+          <ul>
+            <li>启用自动安全更新：配置unattended-upgrades或yum-cron</li>
+            <li>定期检查CVE漏洞：安装漏洞扫描工具</li>
+          </ul>
+        </li>
       </ul>
+      
+      <h3>性能优化</h3>
+      <ul>
+        <li>资源分配：
+          <ul>
+            <li>优化内存使用：调整swappiness参数<code>sysctl vm.swappiness=10</code></li>
+            <li>调整交换空间：设置适当的交换分区大小</li>
+            <li>合理分配CPU资源：使用cgroups或nice值调整进程优先级</li>
+            <li>优化文件句柄限制：增加系统文件描述符限制<code>ulimit -n 65535</code></li>
+          </ul>
+        </li>
+        <li>存储优化：
+          <ul>
+            <li>清理大文件：<code>find / -type f -size +100M -exec du -h {} \\;</code></li>
+            <li>压缩日志：配置logrotate压缩和轮转日志文件</li>
+            <li>配置自动清理：设置定期清理临时文件和旧日志</li>
+            <li>监控inode使用：<code>df -i</code>检查inode使用情况</li>
+          </ul>
+        </li>
+        <li>服务精简：
+          <ul>
+            <li>关闭不必要服务：<code>systemctl disable servicename</code></li>
+            <li>减少开机启动项：检查并精简systemd自启动单元</li>
+            <li>优化服务配置：根据系统资源调整服务参数</li>
+          </ul>
+        </li>
+        <li>内核调优：
+          <ul>
+            <li>适配系统负载：通过/etc/sysctl.conf优化内核参数</li>
+            <li>优化网络参数：调整TCP缓冲区和并发连接数</li>
+            <li>调整IO调度器：选择合适的IO调度策略</li>
+          </ul>
+        </li>
+      </ul>
+      
+      <h3>可靠性提升</h3>
+      <ul>
+        <li>监控告警：
+          <ul>
+            <li>部署监控系统：安装Prometheus、Nagios或Zabbix</li>
+            <li>设置关键指标告警：针对CPU、内存、磁盘等资源设置阈值</li>
+            <li>配置服务监控：监控关键服务的可用性和性能</li>
+          </ul>
+        </li>
+        <li>备份策略：
+          <ul>
+            <li>配置定期备份：使用rsync、restic或系统备份工具</li>
+            <li>验证数据恢复：定期测试备份的可恢复性</li>
+            <li>多层次备份：实施本地+远程备份策略</li>
+          </ul>
+        </li>
+        <li>日志管理：
+          <ul>
+            <li>集中日志收集：部署ELK或Graylog集中管理日志</li>
+            <li>配置日志轮转：优化logrotate策略防止日志占满磁盘</li>
+            <li>设置日志审计：启用auditd记录关键操作</li>
+          </ul>
+        </li>
+        <li>系统健康检查：
+          <ul>
+            <li>配置定期自动巡检：设置cron作业运行系统检查脚本</li>
+            <li>硬件监控：监控硬件温度和健康状态</li>
+            <li>建立基线：记录系统正常状态作为比较基准</li>
+          </ul>
+        </li>
+      </ul>
+      
+      <h3>立即执行的命令</h3>
+      <div class="code">
+        # 在此处提供具体可执行的命令，解决发现的主要问题
+      </div>
     </div>
 
     <div class="section">
@@ -140,31 +330,34 @@ def run_command_with_sudo(command):
 def AI_V3(log_file, ipadd, api_key, base_url, model):
     """Deepseek 引擎AI分析"""
     # 从日志文件名中提取时间戳
-    log_filename = os.path.basename(log_file)  # 获取日志文件名
-    timestamp = log_filename.split('_')[-1].replace('.log', '')  # 提取时间戳部分
+    log_filename = os.path.basename(log_file)
+    timestamp = log_filename.split('_')[-1].replace('.log', '')
     
     # 读取日志文件内容
     with open(log_file, 'r', encoding='utf-8') as f:
         data = f.read()
 
-    client = OpenAI(
-        base_url=base_url,
-        api_key=api_key,
-    )
-
-    stream = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": AI_PROMPT.format(ip=ipadd)},
-            {"role": "user", "content": data},
-        ],
-        stream=True,
-        temperature=0.3,
-        max_tokens=30000
-    )
-
-    filename = os.path.join(dir_url, f"{ipadd}_analysis_{timestamp}.html")
     try:
+        client = OpenAI(
+            base_url=base_url,
+            api_key=api_key,
+        )
+
+        # 使用字符串替换而不是格式化字符串
+        formatted_prompt = AI_PROMPT.replace("{{ip}}", ipadd)
+
+        stream = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": formatted_prompt},
+                {"role": "user", "content": data},
+            ],
+            stream=True,
+            temperature=0.3,
+            max_tokens=30000
+        )
+
+        filename = os.path.join(dir_url, f"{ipadd}_analysis_{timestamp}.html")
         with open(filename, 'w', encoding='utf-8') as f:
             content_buffer = ""
             for chunk in stream:
@@ -191,9 +384,12 @@ def local_ollama(data, ipadd):
     client = Client(host='http://localhost:11434')
 
     try:
+        # 使用字符串替换而不是格式化
+        formatted_prompt = AI_PROMPT.replace("{{ip}}", ipadd)
+        
         response = client.generate(
             model='qwen:1.8b',
-            system=AI_PROMPT.format(ip=ipadd),
+            system=formatted_prompt,
             prompt=data,
             options={'temperature': 0.5},
             stream=True
@@ -323,7 +519,7 @@ def process_server(ip, ssh_user, ssh_pass, ssh_port, volc_key, base_url, model):
     print(f"开始处理服务器: {ip}")
 
     try:
-        # 第一步：执行巡检
+        # 第一步：执行巡检 - 使用ssh_pass作为sudo密码
         log_file = inspect_server(ip, ssh_user, ssh_pass, ssh_pass, ssh_port)
         if not log_file:
             print(f"服务器 {ip} 巡检失败")
@@ -336,7 +532,12 @@ def process_server(ip, ssh_user, ssh_pass, ssh_port, volc_key, base_url, model):
         analysis_file = None
         if volc_key:  # 优先使用Deepseek引擎
             print("\n使用Deepseek引擎分析...")
-            analysis_file = AI_V3(log_file, ip, volc_key, base_url, model)  # 传入日志文件路径而不是内容
+            try:
+                analysis_file = AI_V3(log_file, ip, volc_key, base_url, model)
+            except Exception as e:
+                print(f"Deepseek分析失败: {str(e)}")
+                print("尝试使用本地模型分析...")
+                analysis_file = local_ollama(raw_data, ip)
         else:  # 备用本地模型
             print("\n使用本地模型分析...")
             analysis_file = local_ollama(raw_data, ip)
@@ -422,8 +623,6 @@ def main():
             except Exception as e:
                 print(f"任务执行异常: {str(e)}")
 
-
-
 def test_AI():
     global dir_url
     config = load_config()
@@ -440,15 +639,36 @@ def test_AI():
     model = config['ai'].get('model', 'deepseek-chat')
 
     # 使用 dir_url 构建日志文件路径
+    ip_address = "47.57.186.97"
     log_file = os.path.join(dir_url, "inspection_47.57.186.97_20250317-171050.log")
+    if not os.path.exists(log_file):
+        print(f"日志文件不存在: {log_file}")
+        return
+
     with open(log_file, 'r', encoding='utf-8') as f:
         raw_data = f.read()
 
-    analysis_file = None
-    if volc_key:  # 优先使用Deepseek引擎
-        print("\n使用Deepseek引擎分析...")
-        analysis_file = AI_V3(log_file, "47.57.186.97", volc_key, base_url, model)
-
+    try:
+        analysis_file = None
+        if volc_key:  # 优先使用Deepseek引擎
+            print("\n使用Deepseek引擎分析...")
+            analysis_file = AI_V3(log_file, ip_address, volc_key, base_url, model)
+            if analysis_file:
+                print(f"\n分析报告保存至: {analysis_file}")
+            else:
+                print("Deepseek分析失败，尝试使用本地模型")
+                analysis_file = local_ollama(raw_data, ip_address)
+        else:
+            print("\n没有配置Deepseek API密钥，使用本地模型分析...")
+            analysis_file = local_ollama(raw_data, ip_address)
+            if analysis_file:
+                print(f"\n分析报告保存至: {analysis_file}")
+            else:
+                print("本地模型分析失败")
+    except Exception as e:
+        print(f"测试分析异常: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == '__main__':
     main()
