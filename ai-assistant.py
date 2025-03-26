@@ -3,6 +3,27 @@ from openai import OpenAI
 from mem0 import Memory
 import logging
 from datetime import datetime
+import readline  # 添加readline支持
+import argparse
+
+# 配置readline
+def setup_readline():
+    """配置readline以增强输入功能"""
+    # 设置自动补全
+    readline.parse_and_bind('tab: complete')
+    
+    # 设置历史文件
+    histfile = os.path.join(os.path.expanduser("~"), ".assistant_history")
+    try:
+        readline.read_history_file(histfile)
+        # 设置历史文件大小
+        readline.set_history_length(1000)
+    except FileNotFoundError:
+        pass
+    
+    # 程序退出时保存历史记录
+    import atexit
+    atexit.register(readline.write_history_file, histfile)
 
 # 前置操作
 '''
@@ -28,8 +49,15 @@ docker run -d -p 6333:6333 -p 6334:6334 -v $(pwd)/qdrant_storage:/qdrant/storage
 # 系统提示词配置
 SYSTEM_PROMPT = {
     "role": "system",
-    "content": "你是一个专业的助手，可以提供专业的建议和帮助。"
-               "你会记住用户的喜好和之前的对话内容，提供个性化的服务。"
+    "content": "你是一个专业、友善且富有同理心的AI助手。你的主要特点是：\n"
+               "1. 专业性：在各个领域都能提供准确、深入的专业建议\n"
+               "2. 个性化：会记住用户的偏好和对话历史，提供量身定制的服务\n"
+               "3. 思维方式：善于多角度思考，提供创新性解决方案\n"
+               "4. 语言风格：使用清晰、简洁的中文交流，适时使用专业术语\n"
+               "5. 安全意识：注重保护用户隐私，不会泄露敏感信息\n"
+               "6. 学习能力：持续学习和更新知识，保持信息的时效性\n"
+               "7. 互动方式：主动引导但不过度，让用户感到舒适和受尊重\n"
+               "8. 你会记住用户的喜好和之前的对话内容，提供个性化的服务。"
 }
 
 # API配置
@@ -38,7 +66,15 @@ API_CONFIG = {
     "base_url": "https://api.x.ai/v1",
     "model": "grok-2-latest",
     "temperature": 0.1,
-    "max_tokens": 2000
+    "max_tokens": 30000,
+    "max_history_length": 102 # 系统消息+历史对话
+}
+
+# 用户配置
+USER_CONFIG = {
+    "default_user_id": "default_user",  # 默认用户ID
+    "user_config_file": "./.assistant_config",  # 用户配置文件路径
+    "auto_save_user": True,  # 是否自动保存最后使用的用户ID
 }
 
 # 存储配置
@@ -54,6 +90,15 @@ STORAGE_CONFIG = {
         "ollama_base_url": "http://localhost:11434",
         "embedding_size": 768,
     }
+}
+
+# 限制配置
+LIMIT_CONFIG = {
+    "max_history_length": 102,  # 最大历史消息长度（包含系统消息）
+    "max_memory_items": 100,    # 最大记忆条数
+    "max_search_results": 100,    # 搜索结果最大条数
+    "max_summary_length": 1000,  # 总结最大字数
+    "preview_text_length": 100,  # 预览文本长度
 }
 
 def get_vector_store_config(user_id):
@@ -206,8 +251,6 @@ class PersonalTravelAssistant:
             self.messages.append({"role": "user", "content": prompt})
             
             # 生成回答
-            # logging.info(f"向模型发送请求，消息数量: {len(self.messages)}")
-            # print('xxxxxx',self.messages)
             response = self.client.chat.completions.create(
                 model="grok-2-latest",
                 messages=self.messages,
@@ -224,9 +267,9 @@ class PersonalTravelAssistant:
             # 添加助手回答到历史
             self.messages.append({"role": "assistant", "content": answer})
             
-            # 控制消息历史长度，保留最近10条
-            if len(self.messages) > 12:  # 系统消息+10条对话(5问5答)
-                self.messages = [self.messages[0]] + self.messages[-10:]
+            # 控制消息历史长度，保留系统消息和最近的消息
+            if len(self.messages) > LIMIT_CONFIG["max_history_length"]:
+                self.messages = [self.messages[0]] + self.messages[-(LIMIT_CONFIG["max_history_length"]-1):]
             
             # 存储到记忆系统
             self.add_memory(question, user_id)
@@ -235,12 +278,12 @@ class PersonalTravelAssistant:
             return answer
             
         except Exception as e:
-            # logging.error(f"处理问题时出错: {str(e)}")
             return f"抱歉，处理您的问题时出现错误: {str(e)}"
     
     def add_memory(self, content, user_id, is_assistant=False):
         """将内容添加到记忆系统"""
         try:
+            current_time = datetime.now().isoformat()
             if self.use_memory:
                 role = "assistant" if is_assistant else "user"
                 # 修改为使用适合mem0的格式
@@ -250,9 +293,9 @@ class PersonalTravelAssistant:
                 try:
                     # 添加错误处理以捕获XAI API不兼容问题
                     try:
-                        result = self.memory.add(message, user_id=user_id, metadata={"role": role, "timestamp": datetime.now().isoformat()})
+                        result = self.memory.add(message, user_id=user_id, metadata={"role": role, "timestamp": current_time})
                         # 调试信息
-                        print(f"记忆添加成功: [角色: {role}] - {content[:30]}..." if len(content) > 30 else f"记忆添加成功: [角色: {role}] - {content}")
+                        # print(f"记忆添加成功: [角色: {role}] - {content[:LIMIT_CONFIG['preview_text_length']]}..." if len(content) > LIMIT_CONFIG['preview_text_length'] else f"记忆添加成功: [角色: {role}] - {content}")
                     except TypeError as api_error:
                         if "tools" in str(api_error) and "XAILLM" in str(api_error):
                             # XAI API不兼容问题，回退到简单存储
@@ -268,7 +311,7 @@ class PersonalTravelAssistant:
                     self.memory_store[user_id].append({
                         "role": role,
                         "content": content,
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": current_time
                     })
             else:
                 # 使用简单的内存存储
@@ -278,8 +321,12 @@ class PersonalTravelAssistant:
                 self.memory_store[user_id].append({
                     "role": "assistant" if is_assistant else "user",
                     "content": content,
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": current_time
                 })
+                
+                # 控制记忆数量
+                if len(self.memory_store[user_id]) > LIMIT_CONFIG["max_memory_items"]:
+                    self.memory_store[user_id] = self.memory_store[user_id][-LIMIT_CONFIG["max_memory_items"]:]
                 
         except Exception as e:
             print(f"添加记忆时出错: {str(e)}")
@@ -290,7 +337,7 @@ class PersonalTravelAssistant:
             self.memory_store[user_id].append({
                 "role": "assistant" if is_assistant else "user",
                 "content": content,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": current_time
             })
     
     def get_all_memories(self, user_id):
@@ -333,8 +380,9 @@ class PersonalTravelAssistant:
             # logging.error(f"获取记忆时出错: {str(e)}")
             return []
     
-    def search_memories(self, query, user_id, limit=5):
+    def search_memories(self, query, user_id, limit=None):
         """搜索与查询相关的记忆"""
+        limit = limit or LIMIT_CONFIG["max_search_results"]
         try:
             if self.use_memory:
                 memories = self.memory.search(query=query, user_id=user_id, limit=limit)
@@ -399,7 +447,7 @@ class PersonalTravelAssistant:
         
         try:
             # 构建总结提示
-            summary_prompt = f"请总结以下旅行相关对话的主要内容（100-200字）：\n\n{memories}"
+            summary_prompt = f"请总结以下对话的主要内容（{LIMIT_CONFIG['max_summary_length']}字以内）：\n\n{memories}"
             
             # 请求模型生成总结
             response = self.client.chat.completions.create(
@@ -424,7 +472,7 @@ class PersonalTravelAssistant:
             try:
                 # 提取关键词和主题
                 all_content = " ".join(memories)
-                simple_summary = f"讨论了关于{all_content[:100]}...等话题。"
+                simple_summary = f"讨论了关于{all_content[:LIMIT_CONFIG['max_summary_length']]}...等话题。"
                 return simple_summary
             except:
                 return f"生成总结时出错: {error_msg}"
@@ -503,8 +551,9 @@ class PersonalTravelAssistant:
         except Exception as e:
             return f"删除记忆时出错: {str(e)}"
     
-    def get_memory_history(self, user_id, limit=10):
+    def get_memory_history(self, user_id, limit=None):
         """获取用户的记忆历史，带有时间戳和ID"""
+        limit = limit or LIMIT_CONFIG["max_memory_items"]
         try:
             if self.use_memory:
                 memories = self.memory.get_all(user_id=user_id)
@@ -513,7 +562,13 @@ class PersonalTravelAssistant:
                 if isinstance(memories, dict) and 'results' in memories:
                     for i, mem in enumerate(memories['results'], 1):
                         if isinstance(mem, dict):
-                            timestamp = mem.get('timestamp', 'N/A')
+                            # 从metadata中获取时间戳
+                            timestamp = None
+                            if isinstance(mem.get('metadata'), dict):
+                                timestamp = mem['metadata'].get('timestamp')
+                            if not timestamp:
+                                timestamp = mem.get('timestamp', 'N/A')
+                            
                             if 'text' in mem:
                                 result_list.append((i, timestamp, mem['text']))
                             elif 'memory' in mem:
@@ -684,11 +739,67 @@ def handle_exit(assistant, user_id, conversation_history):
     print("="*50)
     print("感谢使用智能助手！再见！")
 
+def load_user_config():
+    """加载用户配置"""
+    config_file = os.path.expanduser(USER_CONFIG["user_config_file"])
+    try:
+        if os.path.exists(config_file):
+            with open(config_file, 'r') as f:
+                return f.read().strip()
+    except Exception as e:
+        print(f"读取用户配置失败: {str(e)}")
+    return None
+
+def save_user_config(user_id):
+    """保存用户配置"""
+    if not USER_CONFIG["auto_save_user"]:
+        return
+    
+    config_file = os.path.expanduser(USER_CONFIG["user_config_file"])
+    try:
+        os.makedirs(os.path.dirname(config_file), exist_ok=True)
+        with open(config_file, 'w') as f:
+            f.write(user_id)
+    except Exception as e:
+        print(f"保存用户配置失败: {str(e)}")
+
+def get_user_id():
+    """获取用户ID"""
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='智能助手')
+    parser.add_argument('-u', '--user', help='用户ID')
+    args = parser.parse_args()
+    
+    # 优先使用命令行参数
+    if args.user:
+        return args.user
+    
+    # 其次使用配置文件
+    saved_user = load_user_config()
+    if saved_user:
+        return saved_user
+    
+    # 最后使用交互式输入
+    while True:
+        user_id = input("请输入用户ID (直接回车使用默认ID): ").strip()
+        if not user_id:
+            user_id = USER_CONFIG["default_user_id"]
+        
+        if user_id:
+            # 保存用户ID
+            save_user_config(user_id)
+            return user_id
+        
+        print("用户ID不能为空，请重新输入")
+
 def main():
     """主函数：处理用户输入并展示响应"""
     try:
-        # 使用固定用户ID，方便测试
-        user_id = "user_123"
+        # 设置readline
+        setup_readline()
+        
+        # 获取用户ID
+        user_id = get_user_id()
         
         # 创建助手实例，传入用户ID
         assistant = PersonalTravelAssistant(user_id)
@@ -701,16 +812,32 @@ def main():
         for cmd in COMMANDS.values():
             print(f"{cmd['command']} - {cmd['description']}")
         print("-"*50)
+        print("\n输入功能提示：")
+        print("- 使用方向键 ↑↓ 浏览历史输入")
+        print("- 使用 Ctrl+A/E 快速移动到行首/行尾")
+        print("- 使用 Ctrl+W 删除前一个单词")
+        print("- 使用 Ctrl+U 清除当前行")
+        print("- 使用 Ctrl+L 清屏")
+        print("-"*50)
         
         # 记录对话历史以备失败时使用
         conversation_history = []
+        last_input = ""  # 记录上一次的输入
         
         while True:
             try:
                 # 获取用户输入
                 user_input = input("\n问题: ").strip()
-                if not user_input:  # 跳过空输入
+                
+                # 如果输入为空且有上一次输入，则使用上一次的输入
+                if not user_input and last_input:
+                    print(f"使用上一次输入: {last_input}")
+                    user_input = last_input
+                elif not user_input:  # 如果输入为空且没有上一次输入，则继续
                     continue
+                
+                # 更新上一次输入
+                last_input = user_input
                 
                 # 处理命令
                 should_exit, is_command = handle_command(user_input, assistant, user_id, conversation_history)
@@ -731,8 +858,8 @@ def main():
                 print("\n" + "-"*50)
                 
             except KeyboardInterrupt:
-                handle_exit(assistant, user_id, conversation_history)
-                break
+                print("\n检测到中断，如果要退出请输入 'exit' 或 'q'")
+                continue
             except Exception as e:
                 print(f"\n处理输入时出错: {str(e)}")
                 print("请重试或输入其他命令")
