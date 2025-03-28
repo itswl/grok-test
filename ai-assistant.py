@@ -62,13 +62,17 @@ SYSTEM_PROMPT = {
 
 # API配置
 API_CONFIG = {
-    "api_key": "xai-xxx",
-    "base_url": "https://api.x.ai/v1",
-    "model": "grok-2-latest",
+    "llm": "xai",
+    "llm_api_key": "xai-xxx",
+    "llm_base_url": "https://api.x.ai/v1",
+    "llm_model": "grok-2-latest",
     "temperature": 0.1,
     "max_tokens": 30000,
     "max_history_length": 102 # 系统消息+历史对话
 }
+
+# 设置环境变量
+os.environ["XAI_API_KEY"] = API_CONFIG["llm_api_key"]
 
 # 用户配置
 USER_CONFIG = {
@@ -105,9 +109,9 @@ def get_vector_store_config(user_id):
     """根据用户ID生成向量存储配置"""
     return {
         "llm": {
-            "provider": "xai",
+            "provider": API_CONFIG["llm"],
             "config": {
-                "model": API_CONFIG["model"],
+                "model": API_CONFIG["llm_model"],
                 "temperature": API_CONFIG["temperature"],
                 "max_tokens": API_CONFIG["max_tokens"],
             }
@@ -180,13 +184,6 @@ logging.getLogger().setLevel(LOGGING_CONFIG["default_level"])
 for logger in LOGGING_CONFIG["disabled_loggers"]:
     logging.getLogger(logger).setLevel(logging.ERROR)
 
-# 设置环境变量
-os.environ["XAI_API_KEY"] = API_CONFIG["api_key"]
-
-# API客户端配置
-api_key = API_CONFIG["api_key"]
-base_url = API_CONFIG["base_url"]
-
 class PersonalTravelAssistant:
     def __init__(self, user_id):
         """初始化个人助手"""
@@ -200,8 +197,8 @@ class PersonalTravelAssistant:
         try:
             # 创建OpenAI客户端
             self.client = OpenAI(
-                api_key=API_CONFIG["api_key"],
-                base_url=API_CONFIG["base_url"],
+                api_key=API_CONFIG["llm_api_key"],
+                base_url=API_CONFIG["llm_base_url"],
             )
             
             # 获取用户特定的向量存储配置
@@ -252,7 +249,7 @@ class PersonalTravelAssistant:
             
             # 生成回答
             response = self.client.chat.completions.create(
-                model="grok-2-latest",
+                model=API_CONFIG["llm_model"],
                 messages=self.messages,
                 stream=True  # 启用流式输出
             )
@@ -451,7 +448,7 @@ class PersonalTravelAssistant:
             
             # 请求模型生成总结
             response = self.client.chat.completions.create(
-                model="grok-2-latest",
+                model=API_CONFIG["llm_model"],
                 messages=[{"role": "user", "content": summary_prompt}],
                 temperature=0.5,
                 max_tokens=300
@@ -829,19 +826,12 @@ def main():
                 # 获取用户输入
                 user_input = input("\n问题: ").strip()
                 
-                # 如果输入为空且有上一次输入，则使用上一次的输入
-                if not user_input and last_input:
-                    print(f"使用上一次输入: {last_input}")
-                    user_input = last_input
-                elif not user_input:  # 如果输入为空且没有上一次输入，则继续
+                # 如果输入为空则继续
+                if not user_input:
                     continue
-                
-                # 更新上一次输入
-                last_input = user_input
                 
                 # 处理命令
                 should_exit, is_command = handle_command(user_input, assistant, user_id, conversation_history)
-                
                 if should_exit:
                     handle_exit(assistant, user_id, conversation_history)
                     break
